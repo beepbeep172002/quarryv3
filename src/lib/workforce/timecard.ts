@@ -193,7 +193,8 @@ export function computeFromFirstLast(first: number, last: number, employee: Empl
     otHours = roundOtHours(last - otStart, shift.otRounding);
   }
 
-  const ndHours = workedMinutes > 0 ? Math.round(nightMinutes(effectiveStart, last, rules) / 60) : 0;
+  // ND counts whole hours only: from 21:00, the first hour is credited at 22:00 (client note).
+  const ndHours = workedMinutes > 0 ? Math.floor(nightMinutes(effectiveStart, last, rules) / 60) : 0;
 
   return {
     values: { daysCredit, otHours, ndHours },

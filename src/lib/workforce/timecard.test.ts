@@ -54,8 +54,8 @@ describe('client fixture cases (Day shift, nearest-hour rounding)', () => {
     { punches: ['07:37', '16:56'], days: 1, ot: 0, nd: 0, note: 'late: OT starts 16:37' },
     { punches: ['07:01', '11:59'], days: 0.5, ot: 0, nd: 0, note: 'under 5 hours' },
     { punches: ['07:59', '17:33'], days: 1, ot: 1, nd: 0, note: '34 min rounds to 1 hour' },
-    { punches: ['15:41', '23:56'], days: 1, ot: 0, nd: 3, note: 'ND from 21:00' },
-    { punches: ['07:37', '23:54'], days: 1, ot: 7, nd: 3, note: 'long day' },
+    { punches: ['15:41', '23:56'], days: 1, ot: 0, nd: 2, note: 'ND from 21:00, whole hours only' },
+    { punches: ['07:37', '23:54'], days: 1, ot: 7, nd: 2, note: 'long day' },
   ])('$punches.0 -> $punches.1: $days day, $ot OT, $nd ND ($note)', ({ punches, days, ot, nd }) => {
     const result = day(punches);
     expect(result.exception).toBeNull();
@@ -201,7 +201,7 @@ describe('period summary', () => {
     expect(summary).toMatchObject({
       days: 3.5,
       otHours: 3,
-      ndHours: 3,
+      ndHours: 2,
       regHolidays: 1,
       specialHolidaysWorked: 0.5,
       exceptions: 1,
