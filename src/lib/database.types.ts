@@ -38,6 +38,7 @@ export type ActivityCode =
   | 'FUEL_EQUIPMENT_MANAGE'
   | 'FUEL_PURCHASE_EDIT'
   | 'FUEL_ISSUANCE_EDIT'
+  | 'FUEL_SUPPLIER_MANAGE'
   | 'HAULER_OFFSET_LEDGER_VIEW'
   | 'HAULER_OFFSET_LEDGER_ADD'
   | 'HAULER_OFFSET_LEDGER_EXPORT'
@@ -108,6 +109,8 @@ export type WfSettingsRow = {
   punch_dedupe_minutes: number;
   min_daily_wage: number;
   default_shift_id: string | null;
+  /** Missing until the 2026-11-15 migration is run. */
+  odd_punch_mode?: 'review' | 'first_last';
   updated_by: string | null;
   created_at: string;
   updated_at: string;
@@ -124,6 +127,28 @@ export type WfShiftRow = {
   ot_rounding: 'nearest_hour' | 'floor_hour' | 'floor_half_hour' | 'exact';
   crosses_midnight: boolean;
   is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WfDepartmentRow = {
+  id: string;
+  name: string;
+  notes: string;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WfPositionRow = {
+  id: string;
+  /** null = can be used in any department. */
+  department_id: string | null;
+  name: string;
+  notes: string;
+  is_active: boolean;
+  created_by: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -237,6 +262,7 @@ export type WfPayrollLineRow = {
   holiday_pay: number;
   gross_pay: number;
   ca_deduction: number;
+  charge_deduction: number;
   sss: number;
   philhealth: number;
   pagibig: number;
@@ -256,6 +282,29 @@ export type WfCashAdvanceEntryRow = {
   description: string;
   created_by: string | null;
   created_at: string;
+};
+
+export type WfChargeEntryRow = {
+  id: string;
+  employee_id: string;
+  entry_date: string;
+  type: 'charge' | 'deduction' | 'adjustment';
+  charge_type: string;
+  amount: number;
+  payroll_period_id: string | null;
+  description: string;
+  created_by: string | null;
+  created_at: string;
+};
+
+export type WfEmployeeShiftRow = {
+  id: string;
+  employee_id: string;
+  shift_id: string;
+  effective_from: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type WfEmployeeCurrentRateRow = {
@@ -1011,6 +1060,42 @@ export type Database = {
         };
         Relationships: [];
       };
+      fuel_suppliers: {
+        Row: {
+          id: string;
+          name: string;
+          contact_person: string;
+          contact_no: string;
+          address: string;
+          notes: string;
+          is_active: boolean;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          name: string;
+          contact_person?: string;
+          contact_no?: string;
+          address?: string;
+          notes?: string;
+          is_active?: boolean;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          name?: string;
+          contact_person?: string;
+          contact_no?: string;
+          address?: string;
+          notes?: string;
+          is_active?: boolean;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       company_equipment: {
         Row: {
           id: string;
@@ -1591,10 +1676,15 @@ export type Database = {
       wf_payroll_periods: WfTable<WfPayrollPeriodRow, 'date_from' | 'date_to'>;
       wf_payroll_lines: WfTable<WfPayrollLineRow, 'period_id' | 'employee_id' | 'employee_name'>;
       wf_cash_advance_entries: WfTable<WfCashAdvanceEntryRow, 'employee_id' | 'entry_date' | 'type' | 'amount'>;
+      wf_charge_entries: WfTable<WfChargeEntryRow, 'employee_id' | 'entry_date' | 'type' | 'amount'>;
+      wf_employee_shifts: WfTable<WfEmployeeShiftRow, 'employee_id' | 'shift_id' | 'effective_from'>;
+      wf_departments: WfTable<WfDepartmentRow, 'name'>;
+      wf_positions: WfTable<WfPositionRow, 'name'>;
     };
     Views: {
       wf_employee_current_rates: { Row: WfEmployeeCurrentRateRow; Relationships: [] };
       wf_cash_advance_balances: { Row: WfCashAdvanceBalanceRow; Relationships: [] };
+      wf_charge_balances: { Row: WfCashAdvanceBalanceRow; Relationships: [] };
     };
     Functions: {
       wf_import_punches: {
@@ -1618,6 +1708,18 @@ export type Database = {
       wf_unlock_payroll: {
         Args: { p_period_id: string };
         Returns: WfPayrollPeriodRow;
+      };
+      wf_set_employee_shift: {
+        Args: { p_employee_ids: string[]; p_shift_id: string; p_effective_from: string };
+        Returns: number;
+      };
+      wf_remove_employee_shift: {
+        Args: { p_entry_id: string };
+        Returns: undefined;
+      };
+      wf_locked_through: {
+        Args: Record<string, never>;
+        Returns: string | null;
       };
       get_sales_dashboard: {
         Args: { p_from?: string; p_to?: string };
@@ -1970,6 +2072,7 @@ export type CustomerCreditEntry = Database['public']['Tables']['customer_credit_
 export type CustomerCreditLedgerRow = Database['public']['Functions']['get_customer_credit_ledger']['Returns'][number];
 export type FuelBranch = Database['public']['Tables']['fuel_branches']['Row'];
 export type CompanyEquipment = Database['public']['Tables']['company_equipment']['Row'];
+export type FuelSupplier = Database['public']['Tables']['fuel_suppliers']['Row'];
 export type FuelInventoryState = Database['public']['Tables']['fuel_inventory_state']['Row'];
 export type FuelPurchase = Database['public']['Tables']['fuel_purchases']['Row'];
 export type FuelIssuance = Database['public']['Tables']['fuel_issuances']['Row'];

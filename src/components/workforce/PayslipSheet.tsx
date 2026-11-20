@@ -9,6 +9,8 @@ interface Props {
   lines: PayrollLine[];
   /** C.A balance remaining after this payroll, by employee. */
   caBalanceAfter: Map<string, number>;
+  /** Charges (cafeteria tab) balance remaining after this payroll, by employee. */
+  chargeBalanceAfter?: Map<string, number>;
   onClose: () => void;
 }
 
@@ -26,7 +28,7 @@ const PRINT_CSS = `
 `;
 
 /** Salary.xlsx style payslips, 4 per row. */
-export default function PayslipSheet({ dateFrom, dateTo, lines, caBalanceAfter, onClose }: Props) {
+export default function PayslipSheet({ dateFrom, dateTo, lines, caBalanceAfter, chargeBalanceAfter, onClose }: Props) {
   return createPortal(
     <div className="wf-print-root fixed inset-0 z-[80] overflow-auto bg-slate-900/50 p-4 sm:p-8">
       <style>{PRINT_CSS}</style>
@@ -65,7 +67,10 @@ export default function PayslipSheet({ dateFrom, dateTo, lines, caBalanceAfter, 
               <Row label="HOLIDAY PAY" value={money(line.holidayPay)} />
               <Row label="TOTAL SALARY" value={money(line.grossPay)} strong divider />
               <Row label="DEDUCTIONS" value={money(line.totalDeductions)} />
+              {line.caDeduction > 0 && <Row label="· C.A (VALE)" value={money(line.caDeduction)} />}
+              {line.chargeDeduction > 0 && <Row label="· CHARGES (CAFETERIA)" value={money(line.chargeDeduction)} />}
               <Row label="C.A BALANCE" value={money(caBalanceAfter.get(line.employeeId) ?? 0)} />
+              {(chargeBalanceAfter?.get(line.employeeId) ?? 0) > 0 && <Row label="CHARGES BALANCE" value={money(chargeBalanceAfter?.get(line.employeeId) ?? 0)} />}
               <Row label="NET SALARY" value={money(line.netPay)} strong divider />
               <div className="mt-3 border-t border-slate-400 pt-0.5 text-center text-[8px] uppercase">Received by</div>
             </div>

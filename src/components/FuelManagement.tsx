@@ -6,7 +6,7 @@ import {
   Search
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CompanyEquipment, FuelBranch, FuelInventoryLedger, FuelInventoryState, FuelPurchase, Truck as TruckType } from '../lib/database.types';
+import type { CompanyEquipment, FuelBranch, FuelInventoryLedger, FuelInventoryState, FuelPurchase, FuelSupplier, Truck as TruckType } from '../lib/database.types';
 import { isWithinRange, useDateRange } from '../lib/dateRange';
 import { fetchAllPages } from '../lib/fetchAll';
 import { paginate } from '../lib/pagination';
@@ -19,6 +19,7 @@ import FuelHistory from './fuel/FuelHistory';
 import FuelIssuances from './fuel/FuelIssuances';
 import FuelOverview from './fuel/FuelOverview';
 import FuelPurchases from './fuel/FuelPurchases';
+import FuelSuppliers from './fuel/FuelSuppliers';
 import { CATEGORY_COMPANY_EQUIPMENT, CATEGORY_COMPANY_TRUCK, CATEGORY_HAULER_OFFSET, FUEL_RECORDS_START, PAGE_SIZE, checkEntryDate, checkUnitCost, currency, equipmentBranchLabel, equipmentTypes, fmt, formatDate, formatEquipmentTarget, formatTruckTarget, isBackdated, issueCategories, monthStartInput, todayInput } from './fuel/fuelUtils';
 import type { EntryCheck, EquipmentFormState, FuelIssuanceWithTarget, FuelManagementProps, FuelTab } from './fuel/types';
 import ReadOnlyNotice from './ReadOnlyNotice';
@@ -31,6 +32,7 @@ export default function FuelManagement({
   canAdjust = false,
   canExport = false,
   canManageEquipment = false,
+  canManageSuppliers = false,
 }: FuelManagementProps) {
   const [activeTab, setActiveTab] = useState<FuelTab>('overview');
   const [branches, setBranches] = useState<FuelBranch[]>([]);
@@ -42,6 +44,9 @@ export default function FuelManagement({
   const [haulerTrucks, setHaulerTrucks] = useState<TruckType[]>([]);
   const [companyTrucks, setCompanyTrucks] = useState<TruckType[]>([]);
   const [companyEquipment, setCompanyEquipment] = useState<CompanyEquipment[]>([]);
+  const [suppliers, setSuppliers] = useState<FuelSupplier[]>([]);
+  // False until the suppliers table loads (e.g. its migration was not run yet); the purchase form then falls back to typing.
+  const [suppliersLoaded, setSuppliersLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -176,6 +181,21 @@ export default function FuelManagement({
       if (requestId === fuelRequestId.current) setLoading(false);
     }
   }, [selectedBranchId]);
+
+  const fetchSuppliers = useCallback(async () => {
+    const result = await fetchAllPages<FuelSupplier>(async (from, to) => {
+      const page = await supabase.from('fuel_suppliers').select('*').order('name').range(from, to);
+      return { data: page.data as FuelSupplier[] | null, error: page.error };
+    });
+    setSuppliersLoaded(!result.error);
+    setSuppliers(result.error ? [] : result.data);
+  }, []);
+
+  useEffect(() => {
+    void fetchSuppliers();
+  }, [fetchSuppliers]);
+
+  const activeSupplierNames = useMemo(() => suppliers.filter(item => item.is_active).map(item => item.name), [suppliers]);
 
   useEffect(() => {
     fetchFuelData();
@@ -897,6 +917,7 @@ export default function FuelManagement({
     filteredIssuances,
     issuanceFilteredTotals,
     visibleCompanyEquipment,
+    visibleSuppliers: suppliers.filter(item => item.is_active && (!search.trim() || item.name.toLowerCase().includes(search.trim().toLowerCase()))),
     branches,
     filteredLedger,
     selectedBranch,
@@ -921,6 +942,7 @@ export default function FuelManagement({
     { id: 'purchases', label: 'Fuel Purchases' },
     { id: 'issuances', label: 'Fuel Issuances' },
     { id: 'equipment', label: 'Company Equipment' },
+    { id: 'suppliers', label: 'Suppliers' },
     { id: 'history', label: 'Inventory History' },
   ];
 
@@ -948,14 +970,14 @@ export default function FuelManagement({
               <option key={branch.id} value={branch.id}>{branch.company_name} - {branch.name}</option>
             ))}
           </select>
-          <button onClick={fetchFuelData} disabled={loading} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-200 transition-colors">
+          <button onClick={() => { void fetchFuelData(); void fetchSuppliers(); }} disabled={loading} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-200 transition-colors">
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
             Refresh
           </button>
         </div>
       </div>
 
-      {!canAddPurchase && !canIssue && !canAdjust && !canManageEquipment && <ReadOnlyNotice message="This user group can review fuel records only." />}
+      {!canAddPurchase && !canIssue && !canAdjust && !canManageEquipment && !canManageSuppliers && <ReadOnlyNotice message="This user group can review fuel records only." />}
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -1078,6 +1100,8 @@ export default function FuelManagement({
             purchaseCurrentPage={purchaseCurrentPage}
             filteredPurchases={filteredPurchases}
             setPurchasePage={setPurchasePage}
+            supplierNames={suppliersLoaded ? activeSupplierNames : null}
+            onManageSuppliers={() => setActiveTab('suppliers')}
           />
 
           <FuelIssuances
@@ -1107,6 +1131,12 @@ export default function FuelManagement({
             filteredIssuances={filteredIssuances}
             setIssuancePage={setIssuancePage}
           />
+
+          {activeTab === 'suppliers' && (
+            suppliersLoaded
+              ? <FuelSuppliers suppliers={suppliers} canManage={canManageSuppliers} search={search} onChanged={fetchSuppliers} />
+              : <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">The supplier list could not be loaded. If this is a new install, run the migration <code>20261107100000_add_fuel_suppliers.sql</code> in Supabase, then press Refresh.</div>
+          )}
 
           <FuelEquipment
             activeTab={activeTab}

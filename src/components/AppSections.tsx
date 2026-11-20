@@ -22,6 +22,7 @@ const OperationsDashboard = lazy(() => import('./OperationsDashboard'));
 const Reports = lazy(() => import('./Reports'));
 const AccessControl = lazy(() => import('./AccessControl'));
 const WorkforceEmployees = lazy(() => import('./workforce/WorkforceEmployees'));
+const WorkforceDepartments = lazy(() => import('./workforce/WorkforceDepartments'));
 const WorkforceAttendance = lazy(() => import('./workforce/WorkforceAttendance'));
 const WorkforcePayroll = lazy(() => import('./workforce/WorkforcePayroll'));
 const WorkforceCashAdvances = lazy(() => import('./workforce/WorkforceCashAdvances'));
@@ -70,7 +71,7 @@ export default function AppSections({ activeSection, canViewSection, reportTab, 
       {activeSection === 'logistics-trucks' && <TruckList canAdd={can('TRUCKS_ADD')} canEdit={can('TRUCKS_EDIT')} canDelete={can('TRUCKS_DELETE')} />}
       {activeSection === 'logistics-pricing' && <PricingList canAdd={can('PRICING_ADD')} canEdit={can('PRICING_EDIT')} canDelete={can('PRICING_DELETE')} />}
       {activeSection === 'expenses' && <Expenses canAdd={can('EXPENSES_ADD')} canEdit={can('EXPENSES_EDIT') || isManager} canDelete={can('EXPENSES_DELETE')} />}
-      {activeSection === 'fuel-management' && <FuelManagement canAddPurchase={can('FUEL_PURCHASE_ADD') || isManager} canIssue={can('FUEL_ISSUANCE_ADD') || isManager} canEditPurchase={can('FUEL_PURCHASE_EDIT') || isManager} canEditIssuance={can('FUEL_ISSUANCE_EDIT') || isManager} canAdjust={can('FUEL_ADJUST') || isManager} canExport={can('FUEL_EXPORT') || isManager} canManageEquipment={can('FUEL_EQUIPMENT_MANAGE') || isManager} />}
+      {activeSection === 'fuel-management' && <FuelManagement canAddPurchase={can('FUEL_PURCHASE_ADD') || isManager} canIssue={can('FUEL_ISSUANCE_ADD') || isManager} canEditPurchase={can('FUEL_PURCHASE_EDIT') || isManager} canEditIssuance={can('FUEL_ISSUANCE_EDIT') || isManager} canAdjust={can('FUEL_ADJUST') || isManager} canExport={can('FUEL_EXPORT') || isManager} canManageEquipment={can('FUEL_EQUIPMENT_MANAGE') || isManager} canManageSuppliers={can('FUEL_SUPPLIER_MANAGE') || isManager} />}
       {activeSection === 'hauler-offset-ledger' && <HaulerOffsetLedger canAdd={can('HAULER_OFFSET_LEDGER_ADD') || isManager} canAdjust={can('HAULER_OFFSET_LEDGER_ADJUST') || isManager} canExport={can('HAULER_OFFSET_LEDGER_EXPORT') || isManager} canViewDetail={can('HAULER_OFFSET_LEDGER_VIEW_DETAIL') || isManager} canViewStatement={can('HAULER_STATEMENT_VIEW') || isManager} canExportStatement={can('HAULER_STATEMENT_EXPORT') || isManager} canCustomerCreditAdd={can('CUSTOMER_CREDIT_ADD') || isManager} canCustomerCreditAdjust={can('CUSTOMER_CREDIT_ADJUST') || isManager} canCustomerCreditExport={can('CUSTOMER_CREDIT_EXPORT') || isManager} />}
       {(activeSection === 'operations' || activeSection === 'operations-dashboard') && (
         <OperationsDashboard
@@ -102,6 +103,7 @@ export default function AppSections({ activeSection, canViewSection, reportTab, 
       {activeSection === 'reports' && can('REPORTS_VIEW') && <Reports initialTab={reportTab} refreshKey={refreshKey} canEditTransactions={canEditDailyLedger} canExport={can('REPORTS_EXPORT') || isManager} canPrint={can('REPORTS_PRINT') || isManager} onEditTransaction={onEditTransaction} />}
       {activeSection === 'access-control' && canViewSection['access-control'] && <AccessControl />}
       {activeSection === 'workforce-employees' && <WorkforceEmployees canManage={can('WF_EMPLOYEES_MANAGE') || isManager} canViewRates={can('WF_EMPLOYEES_MANAGE') || can('WF_PAYROLL_VIEW') || can('WF_PAYROLL_MANAGE') || can('WF_PAYROLL_LOCK') || isManager} />}
+      {activeSection === 'workforce-departments' && <WorkforceDepartments canManage={can('WF_EMPLOYEES_MANAGE') || isManager} />}
       {activeSection === 'workforce-attendance' && <WorkforceAttendance canImport={can('WF_ATTENDANCE_IMPORT') || isManager} canAdjust={can('WF_ATTENDANCE_ADJUST') || isManager} canViewRates={can('WF_PAYROLL_VIEW') || can('WF_PAYROLL_MANAGE') || can('WF_PAYROLL_LOCK') || can('WF_EMPLOYEES_MANAGE') || isManager} />}
       {activeSection === 'workforce-payroll' && <WorkforcePayroll canManage={can('WF_PAYROLL_MANAGE') || isManager} canLock={can('WF_PAYROLL_LOCK') || isManager} canUnlock={isManager} />}
       {activeSection === 'workforce-cash-advances' && <WorkforceCashAdvances canManage={can('WF_CASH_ADVANCE_MANAGE') || isManager} />}

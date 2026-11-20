@@ -2,14 +2,13 @@ import { useEffect, useState } from 'react';
 import { CalendarCheck2, Save, Trash2, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { friendlyDbError } from '../../lib/dbErrors';
-import type { WfEmployeeRow, WfShiftRow } from '../../lib/database.types';
+import type { WfEmployeeRow } from '../../lib/database.types';
 import { formatDate, qty } from '../../lib/workforce/format';
 import { EXCEPTION_LABELS, minutesToLabel, type DayResult } from '../../lib/workforce/timecard';
 import { Badge, ErrorBanner, Field, ToolbarButton } from './WorkforceUi';
 
 interface Props {
   employee: WfEmployeeRow;
-  shift: WfShiftRow | null;
   day: DayResult;
   canAdjust: boolean;
   onClose: () => void;
@@ -39,7 +38,7 @@ function parseHours(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
-export default function TimecardPanel({ employee, shift, day, canAdjust, onClose, onSaved }: Props) {
+export default function TimecardPanel({ employee, day, canAdjust, onClose, onSaved }: Props) {
   const [form, setForm] = useState<OverrideForm>(() => formFromDay(day));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -122,7 +121,7 @@ export default function TimecardPanel({ employee, shift, day, canAdjust, onClose
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">ID {employee.biometric_id}</p>
             <h2 className="text-base font-bold text-slate-800">{employee.full_name}</h2>
-            <p className="text-sm text-slate-500">{formatDate(day.date)} · {shift?.name ?? 'No shift'}</p>
+            <p className="text-sm text-slate-500">{formatDate(day.date)} · {day.shift?.name ?? 'No shift'}</p>
           </div>
           <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100" aria-label="Close"><X size={16} /></button>
         </div>

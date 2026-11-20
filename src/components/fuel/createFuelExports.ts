@@ -1,4 +1,4 @@
-import type { CompanyEquipment, FuelBranch, FuelInventoryLedger, FuelPurchase } from '../../lib/database.types';
+import type { CompanyEquipment, FuelBranch, FuelInventoryLedger, FuelPurchase, FuelSupplier } from '../../lib/database.types';
 import type { useDateRange } from '../../lib/dateRange';
 import { csvEscape, downloadTextFile, equipmentBranchLabel, fmt, formatDateTime, formatEquipmentTarget, htmlEscape, todayInput } from './fuelUtils';
 import type { FuelIssuanceWithTarget, FuelReversals, FuelTab } from './types';
@@ -15,6 +15,7 @@ interface ExportOptions {
   filteredIssuances: FuelIssuanceWithTarget[];
   issuanceFilteredTotals: { liters: number; amount: number; };
   visibleCompanyEquipment: CompanyEquipment[];
+  visibleSuppliers: FuelSupplier[];
   branches: FuelBranch[];
   filteredLedger: FuelInventoryLedger[];
   selectedBranch: FuelBranch | null;
@@ -33,6 +34,7 @@ export function createFuelExports({
   filteredIssuances,
   issuanceFilteredTotals,
   visibleCompanyEquipment,
+  visibleSuppliers,
   branches,
   filteredLedger,
   selectedBranch,
@@ -84,6 +86,14 @@ export function createFuelExports({
         filename: 'company-equipment',
         headers: ['Name', 'Type', 'Code / Plate', 'Operator', 'Branch', 'Notes'],
         rows: visibleCompanyEquipment.map(item => [item.name, item.equipment_type, item.plate_or_code, item.operator_name, equipmentBranchLabel(item, branches), item.notes]),
+      };
+    }
+    if (activeTab === 'suppliers') {
+      return {
+        title: 'Fuel Suppliers',
+        filename: 'fuel-suppliers',
+        headers: ['Supplier', 'Contact Person', 'Contact No.', 'Address', 'Notes', 'Status'],
+        rows: visibleSuppliers.map(item => [item.name, item.contact_person, item.contact_no, item.address, item.notes, item.is_active ? 'Active' : 'Inactive']),
       };
     }
     return {

@@ -26,6 +26,9 @@ interface FuelPurchasesProps {
   purchaseCurrentPage: number;
   filteredPurchases: FuelPurchase[];
   setPurchasePage: React.Dispatch<React.SetStateAction<number>>;
+  /** Active supplier names for the dropdown, or null when the list is unavailable (free typing). */
+  supplierNames: string[] | null;
+  onManageSuppliers: () => void;
 }
 
 export default function FuelPurchases({
@@ -44,8 +47,13 @@ export default function FuelPurchases({
   startEditPurchase,
   purchaseCurrentPage,
   filteredPurchases,
-  setPurchasePage
+  setPurchasePage,
+  supplierNames,
+  onManageSuppliers
 }: FuelPurchasesProps) {
+  const currentSupplier = purchaseForm.supplier.trim();
+  const supplierListed = !currentSupplier || (supplierNames ?? []).some(name => name.toLowerCase() === currentSupplier.toLowerCase());
+
   return (<>
     {activeTab === 'purchases' && (
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
@@ -65,7 +73,22 @@ export default function FuelPurchases({
             ]} />
             <form onSubmit={handlePurchaseSubmit} className="space-y-4">
               <Field label="Date"><input required type="date" value={purchaseForm.purchase_date} onChange={e => setPurchaseForm(f => ({ ...f, purchase_date: e.target.value }))} className={inputClass} /></Field>
-              <Field label="Supplier"><input required value={purchaseForm.supplier} onChange={e => setPurchaseForm(f => ({ ...f, supplier: e.target.value }))} className={inputClass} placeholder="RTM Gas Station" /></Field>
+              <Field label="Supplier">
+                {supplierNames && supplierNames.length > 0 ? (
+                  <select required value={supplierListed ? (supplierNames.find(name => name.toLowerCase() === currentSupplier.toLowerCase()) ?? '') : purchaseForm.supplier} onChange={e => setPurchaseForm(f => ({ ...f, supplier: e.target.value }))} className={inputClass}>
+                    <option value="">Select supplier</option>
+                    {!supplierListed && <option value={purchaseForm.supplier}>{purchaseForm.supplier} (not in supplier list)</option>}
+                    {supplierNames.map(name => <option key={name} value={name}>{name}</option>)}
+                  </select>
+                ) : (
+                  <input required value={purchaseForm.supplier} onChange={e => setPurchaseForm(f => ({ ...f, supplier: e.target.value }))} className={inputClass} placeholder="RTM Gas Station" />
+                )}
+                {supplierNames && (
+                  <button type="button" onClick={onManageSuppliers} className="mt-1 text-xs font-semibold text-emerald-700 hover:text-emerald-800">
+                    {supplierNames.length > 0 ? 'Supplier not listed? Manage suppliers' : 'No suppliers yet. Add them in the Suppliers tab'}
+                  </button>
+                )}
+              </Field>
               <Field label="Reference"><input value={purchaseForm.reference_no} onChange={e => setPurchaseForm(f => ({ ...f, reference_no: e.target.value }))} className={inputClass} placeholder="PO-2026-0701-001" /></Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Liters"><input required type="number" min="0.01" step="0.01" value={purchaseForm.liters} onChange={e => setPurchaseForm(f => ({ ...f, liters: e.target.value }))} className={inputClass} /></Field>

@@ -5,7 +5,7 @@
  *   O.T PAY     = OT hrs x rate per hr x OT multiplier
  *   NIGHT DIF   = ND hrs x rate per hr x ND rate
  *   HOLIDAY PAY = regular holidays x rate + special worked x rate x special premium
- *   NET SALARY  = total salary - C.A - SSS - PhilHealth - Pag-IBIG - other
+ *   NET SALARY  = total salary - C.A - charges - SSS - PhilHealth - Pag-IBIG - other
  */
 import { addDaysToDateKey } from '../date';
 import type { PayRules, PayType } from './types';
@@ -18,6 +18,8 @@ export interface PayInputs {
   regHolidays: number;
   specialHolidaysWorked: number;
   caDeduction: number;
+  /** Charges (cafeteria tab, etc.). */
+  chargeDeduction: number;
   sss: number;
   philhealth: number;
   pagibig: number;
@@ -62,7 +64,7 @@ export function computePay(inputs: PayInputs, rules: PayRules4Payroll): PayAmoun
   const holidayPay = round2(safe(inputs.regHolidays) * rate + safe(inputs.specialHolidaysWorked) * rate * rules.specialHolidayPremium);
   const grossPay = round2(basicPay + otPay + ndPay + holidayPay);
   const totalDeductions = round2(
-    safe(inputs.caDeduction) + safe(inputs.sss) + safe(inputs.philhealth) + safe(inputs.pagibig) + safe(inputs.otherDeductions),
+    safe(inputs.caDeduction) + safe(inputs.chargeDeduction) + safe(inputs.sss) + safe(inputs.philhealth) + safe(inputs.pagibig) + safe(inputs.otherDeductions),
   );
   return {
     hourlyRate: round2(hourly),
@@ -76,9 +78,23 @@ export function computePay(inputs: PayInputs, rules: PayRules4Payroll): PayAmoun
   };
 }
 
-/** C.A deduction default: the per-payroll amount, never more than what is still owed. */
-export function prefillCaDeduction(balance: number, perPayroll: number): number {
-  return round2(Math.max(0, Math.min(safe(balance), safe(perPayroll))));
+/**
+ * C.A deduction default: the per-payroll amount, never more than what is still owed.
+ * No per-payroll amount set = the whole balance, but never more than what is left of the pay.
+ */
+export function prefillCaDeduction(balance: number, perPayroll: number, payLeft = Number.POSITIVE_INFINITY): number {
+  const owed = Math.max(0, safe(balance));
+  if (safe(perPayroll) > 0) return round2(Math.min(owed, safe(perPayroll)));
+  const room = Number.isNaN(payLeft) ? 0 : Math.max(0, payLeft);
+  return round2(Math.min(owed, room));
+}
+
+/**
+ * Charges default: the whole open balance, but never more than what is left of the pay
+ * after the other deductions. The rest carries over to the next payroll.
+ */
+export function prefillChargeDeduction(balance: number, payLeft: number): number {
+  return round2(Math.max(0, Math.min(safe(balance), safe(payLeft))));
 }
 
 export interface RateHistoryEntry {
@@ -114,6 +130,10 @@ export function buildPayrollLine(input: {
   summary: { days: number; otHours: number; ndHours: number; regHolidays: number; specialHolidaysWorked: number };
   caBalance: number;
   caPerPayroll: number;
+  /** Open charges balance (cafeteria tab, etc.). */
+  chargeBalance?: number;
+  /** Deductions kept from the previous draft (SSS, PhilHealth, Pag-IBIG, other). */
+  kept?: Pick<PayInputs, 'sss' | 'philhealth' | 'pagibig' | 'otherDeductions'>;
   rules: PayRules4Payroll;
   remarks?: string;
 }): PayrollLine {
@@ -124,12 +144,16 @@ export function buildPayrollLine(input: {
     ndHours: input.summary.ndHours,
     regHolidays: input.summary.regHolidays,
     specialHolidaysWorked: input.summary.specialHolidaysWorked,
-    caDeduction: prefillCaDeduction(input.caBalance, input.caPerPayroll),
-    sss: 0,
-    philhealth: 0,
-    pagibig: 0,
-    otherDeductions: 0,
+    caDeduction: 0,
+    chargeDeduction: 0,
+    sss: input.kept?.sss ?? 0,
+    philhealth: input.kept?.philhealth ?? 0,
+    pagibig: input.kept?.pagibig ?? 0,
+    otherDeductions: input.kept?.otherDeductions ?? 0,
   };
+  inputs.caDeduction = prefillCaDeduction(input.caBalance, input.caPerPayroll, computePay(inputs, input.rules).netPay);
+  const before = computePay(inputs, input.rules);
+  inputs.chargeDeduction = prefillChargeDeduction(input.chargeBalance ?? 0, before.netPay);
   return {
     employeeId: input.employeeId,
     employeeName: input.employeeName,
@@ -184,6 +208,7 @@ export function toSavePayload(lines: PayrollLine[]) {
     holiday_pay: line.holidayPay,
     gross_pay: line.grossPay,
     ca_deduction: line.caDeduction,
+    charge_deduction: line.chargeDeduction,
     sss: line.sss,
     philhealth: line.philhealth,
     pagibig: line.pagibig,
@@ -199,6 +224,8 @@ export function fromSavedLine(row: {
   days: number; ot_hours: number; nd_hours: number; reg_holidays: number; special_holidays_worked: number;
   basic_pay: number; ot_pay: number; nd_pay: number; holiday_pay: number; gross_pay: number; net_pay: number;
   ca_deduction: number; sss: number; philhealth: number; pagibig: number; other_deductions: number; remarks: string;
+  /** Missing on rows saved before charges existed. */
+  charge_deduction?: number | null;
 }): PayrollLine {
   const inputs: PayInputs = {
     dailyRate: Number(row.daily_rate),
@@ -208,6 +235,7 @@ export function fromSavedLine(row: {
     regHolidays: Number(row.reg_holidays),
     specialHolidaysWorked: Number(row.special_holidays_worked),
     caDeduction: Number(row.ca_deduction),
+    chargeDeduction: Number(row.charge_deduction ?? 0),
     sss: Number(row.sss),
     philhealth: Number(row.philhealth),
     pagibig: Number(row.pagibig),
@@ -226,7 +254,7 @@ export function fromSavedLine(row: {
     ndPay: Number(row.nd_pay),
     holidayPay: Number(row.holiday_pay),
     grossPay: Number(row.gross_pay),
-    totalDeductions: round2(inputs.caDeduction + inputs.sss + inputs.philhealth + inputs.pagibig + inputs.otherDeductions),
+    totalDeductions: round2(inputs.caDeduction + inputs.chargeDeduction + inputs.sss + inputs.philhealth + inputs.pagibig + inputs.otherDeductions),
     netPay: Number(row.net_pay),
   };
 }

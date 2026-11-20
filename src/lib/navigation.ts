@@ -6,7 +6,7 @@ const sections: readonly NavSection[] = [
   'hauler-offset-ledger', 'operations', 'operations-dashboard',
   'operations-stone-crusher', 'operations-sand-washing',
   'operations-quarry-site', 'operations-wobbler', 'reports', 'access-control',
-  'workforce-employees', 'workforce-attendance', 'workforce-payroll',
+  'workforce-employees', 'workforce-departments', 'workforce-attendance', 'workforce-payroll',
   'workforce-cash-advances', 'workforce-settings',
 ];
 

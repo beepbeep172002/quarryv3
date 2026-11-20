@@ -17,6 +17,7 @@ export type NavSection =
   | 'operations-quarry-site'
   | 'operations-wobbler'
   | 'workforce-employees'
+  | 'workforce-departments'
   | 'workforce-attendance'
   | 'workforce-payroll'
   | 'workforce-cash-advances'
