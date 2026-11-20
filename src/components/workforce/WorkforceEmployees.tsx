@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Download, Edit3, Plus, Power, Save, Search, Users } from 'lucide-react';
+import { CalendarClock, Download, Edit3, Plus, Power, Save, Search, Trash2, Users } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { friendlyDbError, NOT_SAVED_MESSAGE } from '../../lib/dbErrors';
 import { useBusinessToday } from '../../lib/date';
-import type { WfEmployeeRateRow, WfEmployeeRow, WfShiftRow } from '../../lib/database.types';
+import type { WfEmployeeRateRow, WfEmployeeRow, WfEmployeeShiftRow, WfShiftRow } from '../../lib/database.types';
 import { paginate } from '../../lib/pagination';
 import { normalizeBiometricId } from '../../lib/workforce/biometricParser';
 import { loadRateHistory, loadWorkforceBasics } from '../../lib/workforce/data';
+import { loadDepartmentLists, nameKey, positionsForDepartment, type DepartmentLists } from '../../lib/workforce/departments';
 import { formatDate, money, parseAmount } from '../../lib/workforce/format';
 import { rateOn, rateWarning } from '../../lib/workforce/payroll';
 import { DEFAULT_PAY_RULES, type PayRules } from '../../lib/workforce/types';
 import { csvEscape, downloadTextFile } from '../fuel/fuelUtils';
+import ShiftChangeModal from './ShiftChangeModal';
 import ActionModal from '../ActionModal';
 import Pagination from '../Pagination';
 import ReadOnlyNotice from '../ReadOnlyNotice';
@@ -36,12 +38,18 @@ interface EmployeeForm {
   notes: string;
   new_rate: string;
   rate_effective_from: string;
+  /** Start date of a shift change (existing employees). */
+  shift_effective_from: string;
 }
+
+/** Schedule rows from before the first change keep the old shift for every earlier day. */
+const SCHEDULE_BASELINE = '2000-01-01';
 
 function emptyForm(today: string, defaultShiftId: string): EmployeeForm {
   return {
     biometric_id: '', full_name: '', department: '', position: '', status: 'active', pay_type: 'daily',
     ot_eligible: true, shift_id: defaultShiftId, ca_deduction_per_payroll: '', notes: '', new_rate: '', rate_effective_from: today,
+    shift_effective_from: today,
   };
 }
 
@@ -59,6 +67,7 @@ function formFromEmployee(employee: WfEmployeeRow, today: string): EmployeeForm 
     notes: employee.notes,
     new_rate: '',
     rate_effective_from: today,
+    shift_effective_from: today,
   };
 }
 
@@ -81,15 +90,22 @@ export default function WorkforceEmployees({ canManage, canViewRates }: Props) {
   const [saving, setSaving] = useState(false);
   const [statusTarget, setStatusTarget] = useState<WfEmployeeRow | null>(null);
   const [statusSaving, setStatusSaving] = useState(false);
+  const [shiftSchedule, setShiftSchedule] = useState<WfEmployeeShiftRow[]>([]);
+  const [scheduleAvailable, setScheduleAvailable] = useState(false);
+  const [bulkShiftOpen, setBulkShiftOpen] = useState(false);
+  const [removingShiftId, setRemovingShiftId] = useState<string | null>(null);
+  const [departmentLists, setDepartmentLists] = useState<DepartmentLists>({ departments: [], positions: [], available: false });
   const saveInFlight = useRef(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError('');
-    const [basics, rateResult] = await Promise.all([
+    const [basics, rateResult, lists] = await Promise.all([
       loadWorkforceBasics(),
       canViewRates ? loadRateHistory() : Promise.resolve({ data: [] as WfEmployeeRateRow[], error: null }),
+      loadDepartmentLists(),
     ]);
+    setDepartmentLists(lists.data);
     if (basics.error || !basics.data) {
       setError(`Could not load employees. ${basics.error ?? ''}`.trim());
     } else {
@@ -97,6 +113,8 @@ export default function WorkforceEmployees({ canManage, canViewRates }: Props) {
       setShifts(basics.data.shifts);
       setRules(basics.data.rules);
       setDefaultShiftId(basics.data.settings?.default_shift_id ?? null);
+      setShiftSchedule(basics.data.shiftSchedule);
+      setScheduleAvailable(basics.data.shiftScheduleAvailable);
     }
     if (rateResult.error) setError(`Could not load rates. ${rateResult.error.message}`);
     else setRates(rateResult.data);
@@ -107,6 +125,15 @@ export default function WorkforceEmployees({ canManage, canViewRates }: Props) {
   useEffect(() => { setPage(1); }, [search, statusFilter, flagFilter]);
 
   const shiftsById = useMemo(() => new Map(shifts.map(shift => [shift.id, shift])), [shifts]);
+  const upcomingShift = useMemo(() => {
+    const next = new Map<string, WfEmployeeShiftRow>();
+    for (const row of shiftSchedule) {
+      if (row.effective_from <= today) continue;
+      const current = next.get(row.employee_id);
+      if (!current || row.effective_from < current.effective_from) next.set(row.employee_id, row);
+    }
+    return next;
+  }, [shiftSchedule, today]);
   const rateHistory = useMemo(() => rates.map(rate => ({ employeeId: rate.employee_id, dailyRate: Number(rate.daily_rate), effectiveFrom: rate.effective_from })), [rates]);
   const currentRate = useCallback((employeeId: string) => rateOn(rateHistory, employeeId, today), [rateHistory, today]);
 
@@ -151,6 +178,21 @@ export default function WorkforceEmployees({ canManage, canViewRates }: Props) {
     setForm(previous => ({ ...previous, [key]: value }));
   }
 
+  /** A new department clears a position that department does not have. */
+  function changeDepartment(department: string) {
+    setForm(previous => {
+      const keepsPosition = !previous.position || positionsForDepartment(departmentLists, department, true).some(item => nameKey(item.name) === nameKey(previous.position));
+      return { ...previous, department, position: keepsPosition ? previous.position : '' };
+    });
+  }
+
+  const departmentOptions = departmentLists.departments.filter(item => item.is_active || nameKey(item.name) === nameKey(form.department)).map(item => item.name);
+  if (form.department && !departmentOptions.some(name => nameKey(name) === nameKey(form.department))) departmentOptions.unshift(form.department);
+  const positionOptions = positionsForDepartment(departmentLists, form.department, true)
+    .filter(item => item.is_active || nameKey(item.name) === nameKey(form.position))
+    .map(item => item.name);
+  if (form.position && !positionOptions.some(name => nameKey(name) === nameKey(form.position))) positionOptions.unshift(form.position);
+
   async function handleSave(event?: React.FormEvent) {
     event?.preventDefault();
     if (!canManage || !editing || saveInFlight.current) return;
@@ -160,6 +202,10 @@ export default function WorkforceEmployees({ canManage, canViewRates }: Props) {
     const newRate = form.new_rate.trim() ? parseAmount(form.new_rate) : null;
     if (newRate !== null && !(newRate > 0)) return setFormError('The daily rate must be more than zero.');
     if (newRate !== null && !form.rate_effective_from) return setFormError('Choose when the new rate takes effect.');
+    const existing = editing === 'new' ? null : editing;
+    const shiftChanged = !!existing && (existing.shift_id ?? '') !== form.shift_id;
+    const scheduleShift = shiftChanged && scheduleAvailable && !!form.shift_id;
+    if (scheduleShift && !form.shift_effective_from) return setFormError('Choose the date the new shift starts.');
 
     saveInFlight.current = true;
     setSaving(true);
@@ -173,9 +219,10 @@ export default function WorkforceEmployees({ canManage, canViewRates }: Props) {
         status: form.status,
         pay_type: form.pay_type,
         ot_eligible: form.ot_eligible,
-        shift_id: form.shift_id || null,
         ca_deduction_per_payroll: parseAmount(form.ca_deduction_per_payroll),
         notes: form.notes.trim(),
+        // Shift changes of existing employees are dated, so they go through the schedule below.
+        ...(scheduleShift ? {} : { shift_id: form.shift_id || null }),
       };
       const result = editing === 'new'
         ? await supabase.from('wf_employees').insert(payload).select('id')
@@ -188,6 +235,18 @@ export default function WorkforceEmployees({ canManage, canViewRates }: Props) {
       if (!employeeId) {
         setFormError(NOT_SAVED_MESSAGE);
         return;
+      }
+      if (scheduleShift) {
+        const shiftResult = await supabase.rpc('wf_set_employee_shift', {
+          p_employee_ids: [employeeId],
+          p_shift_id: form.shift_id,
+          p_effective_from: form.shift_effective_from,
+        });
+        if (shiftResult.error) {
+          setFormError(`The employee was saved, but the shift was not changed. ${friendlyDbError(shiftResult.error)}`);
+          await fetchData();
+          return;
+        }
       }
       if (newRate !== null) {
         const rateResult = await supabase
@@ -235,13 +294,30 @@ export default function WorkforceEmployees({ canManage, canViewRates }: Props) {
     downloadTextFile(`employees-${today}.csv`, [headers, ...rows].map(row => row.map(csvEscape).join(',')).join('\n'), 'text/csv;charset=utf-8');
   }
 
+  async function handleRemoveShift(row: WfEmployeeShiftRow) {
+    setRemovingShiftId(row.id);
+    setFormError('');
+    const { error: removeError } = await supabase.rpc('wf_remove_employee_shift', { p_entry_id: row.id });
+    setRemovingShiftId(null);
+    if (removeError) {
+      setFormError(friendlyDbError(removeError));
+      return;
+    }
+    await fetchData();
+  }
+
   const editingRates = editing && editing !== 'new' ? rates.filter(rate => rate.employee_id === editing.id) : [];
+  const editingSchedule = editing && editing !== 'new'
+    ? shiftSchedule.filter(row => row.employee_id === editing.id).sort((a, b) => b.effective_from.localeCompare(a.effective_from))
+    : [];
+  const editingShiftChanged = editing && editing !== 'new' && (editing.shift_id ?? '') !== form.shift_id && !!form.shift_id;
 
   return (
     <div className="space-y-5">
       <PageHeader title="Employees" subtitle="Biometric ID is the matching key for attendance imports. Names can differ from the device.">
         <ToolbarButton icon={<Download size={16} />} label="Export" onClick={handleExport} disabled={filtered.length === 0} />
         <RefreshButton loading={loading} onClick={fetchData} />
+        {canManage && scheduleAvailable && <ToolbarButton icon={<CalendarClock size={16} />} label="Change Shift" onClick={() => setBulkShiftOpen(true)} />}
         {canManage && <ToolbarButton tone="primary" icon={<Plus size={16} />} label="Add Employee" onClick={openNew} />}
       </PageHeader>
 
@@ -325,7 +401,14 @@ export default function WorkforceEmployees({ canManage, canViewRates }: Props) {
                           <p>{employee.department || '—'}</p>
                           <p className="text-xs text-slate-400">{employee.position}</p>
                         </td>
-                        <td className="px-4 py-3 text-slate-600">{shiftsById.get(employee.shift_id ?? '')?.name ?? '—'}</td>
+                        <td className="px-4 py-3 text-slate-600">
+                          <p>{shiftsById.get(employee.shift_id ?? '')?.name ?? '—'}</p>
+                          {upcomingShift.has(employee.id) && (
+                            <p className="text-xs text-sky-600">
+                              → {shiftsById.get(upcomingShift.get(employee.id)!.shift_id)?.name ?? 'Shift'} from {formatDate(upcomingShift.get(employee.id)!.effective_from)}
+                            </p>
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-slate-600">
                           <p className="capitalize">{employee.pay_type}</p>
                           <p className="text-xs text-slate-400">{employee.ot_eligible && employee.pay_type === 'daily' ? 'OT eligible' : 'No OT'}</p>
@@ -377,26 +460,50 @@ export default function WorkforceEmployees({ canManage, canViewRates }: Props) {
             <Field label="Full Name">
               <input value={form.full_name} onChange={event => update('full_name', event.target.value)} className="input" placeholder="ex. DELA CRUZ, JUAN" required />
             </Field>
-            <Field label="Department">
-              <input value={form.department} onChange={event => update('department', event.target.value)} className="input" />
-            </Field>
-            <Field label="Position">
-              <input value={form.position} onChange={event => update('position', event.target.value)} className="input" />
-            </Field>
-            <Field label="Shift">
+            {departmentLists.available ? (
+              <>
+                <Field label="Department" helper="Edit the list in Departments & Positions">
+                  <select value={form.department} onChange={event => changeDepartment(event.target.value)} className="input">
+                    <option value="">— None —</option>
+                    {departmentOptions.map(name => <option key={name} value={name}>{name}</option>)}
+                  </select>
+                </Field>
+                <Field label="Position" helper={positionOptions.length === 0 ? 'No positions for this department yet' : undefined}>
+                  <select value={form.position} onChange={event => update('position', event.target.value)} className="input">
+                    <option value="">— None —</option>
+                    {positionOptions.map(name => <option key={name} value={name}>{name}</option>)}
+                  </select>
+                </Field>
+              </>
+            ) : (
+              <>
+                <Field label="Department">
+                  <input value={form.department} onChange={event => update('department', event.target.value)} className="input" />
+                </Field>
+                <Field label="Position">
+                  <input value={form.position} onChange={event => update('position', event.target.value)} className="input" />
+                </Field>
+              </>
+            )}
+            <Field label="Shift" helper={editing !== 'new' && scheduleAvailable ? 'Changes start on a date' : undefined}>
               <select value={form.shift_id} onChange={event => update('shift_id', event.target.value)} className="input">
-                <option value="">No shift (attendance flagged)</option>
+                <option value="" disabled={editing !== 'new' && scheduleAvailable && editingSchedule.length > 0}>No shift (attendance flagged)</option>
                 {shifts.map(shift => <option key={shift.id} value={shift.id}>{shift.name}{shift.is_active ? '' : ' (inactive)'}</option>)}
               </select>
             </Field>
+            {editingShiftChanged && scheduleAvailable && (
+              <Field label="New Shift Starts On" helper="Days before this keep the old shift">
+                <input type="date" value={form.shift_effective_from} onChange={event => update('shift_effective_from', event.target.value)} className="input" required />
+              </Field>
+            )}
             <Field label="Pay Type" helper={form.pay_type === 'fixed' ? 'Paid every calendar day, no OT' : 'Paid per day worked'}>
               <select value={form.pay_type} onChange={event => update('pay_type', event.target.value as EmployeeForm['pay_type'])} className="input">
                 <option value="daily">Daily (per day worked)</option>
                 <option value="fixed">Fixed (guards / office staff)</option>
               </select>
             </Field>
-            <Field label="C.A Deduction per Payroll" helper="Prefills the payroll register">
-              <input type="number" min="0" step="0.01" value={form.ca_deduction_per_payroll} onChange={event => update('ca_deduction_per_payroll', event.target.value)} className="input" placeholder="0.00" />
+            <Field label="C.A Deduction per Payroll" helper="Blank = whole balance">
+              <input type="number" min="0" step="0.01" value={form.ca_deduction_per_payroll} onChange={event => update('ca_deduction_per_payroll', event.target.value)} className="input" placeholder="Whole balance" />
             </Field>
             <Field label="Status">
               <select value={form.status} onChange={event => update('status', event.target.value as EmployeeForm['status'])} className="input">
@@ -412,6 +519,34 @@ export default function WorkforceEmployees({ canManage, canViewRates }: Props) {
           <Field label="Notes">
             <textarea value={form.notes} onChange={event => update('notes', event.target.value)} className="input min-h-16 resize-y" />
           </Field>
+
+          {editingSchedule.length > 0 && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-semibold text-slate-700">Shift Schedule</p>
+              <p className="mt-0.5 text-xs text-slate-500">Each shift applies from its start date until the next change. Timecards use the shift of each day.</p>
+              <table className="mt-3 w-full text-xs">
+                <thead><tr className="text-left text-slate-400"><th className="py-1">Starts</th><th className="py-1">Shift</th><th className="py-1" /></tr></thead>
+                <tbody>
+                  {editingSchedule.map(row => (
+                    <tr key={row.id} className="border-t border-slate-200 text-slate-600">
+                      <td className="py-1">{row.effective_from === SCHEDULE_BASELINE ? 'Before the first change' : formatDate(row.effective_from)}</td>
+                      <td className="py-1">
+                        {shiftsById.get(row.shift_id)?.name ?? 'Unknown shift'}
+                        {row.effective_from > today && <span className="ml-1.5 text-sky-600">(upcoming)</span>}
+                      </td>
+                      <td className="py-1 text-right">
+                        {canManage && row.effective_from !== SCHEDULE_BASELINE && (
+                          <button type="button" onClick={() => handleRemoveShift(row)} disabled={removingShiftId === row.id} className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-red-600 hover:bg-red-50 disabled:opacity-50" title="Remove this shift change">
+                            <Trash2 size={12} /> Remove
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {canViewRates && (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
@@ -449,6 +584,19 @@ export default function WorkforceEmployees({ canManage, canViewRates }: Props) {
           <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
         </form>
       </FormModal>
+
+      {bulkShiftOpen && (
+        <ShiftChangeModal
+          employees={employees}
+          shifts={shifts}
+          today={today}
+          onClose={() => setBulkShiftOpen(false)}
+          onSaved={async () => {
+            setBulkShiftOpen(false);
+            await fetchData();
+          }}
+        />
+      )}
 
       <ActionModal
         open={!!statusTarget}

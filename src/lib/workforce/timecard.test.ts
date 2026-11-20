@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   computeTimecard,
+  cutoffBetween,
   dedupePunches,
   groupPunchesByWorkDate,
   minutesToLabel,
   nightMinutes,
   parsePunchTimestamp,
   roundOtHours,
+  shiftOnDate,
 } from './timecard';
 import { DEFAULT_PAY_RULES, type EmployeeRule, type Holiday, type ShiftRule } from './types';
 
@@ -169,6 +171,97 @@ describe('night shifts', () => {
     });
     expect(card.days[0]).toMatchObject({ daysCredit: 1, otHours: 0, ndHours: 7, exception: null });
     expect(card.days[1].daysCredit).toBe(0);
+  });
+});
+
+describe('odd punch setting', () => {
+  const punches = ['06:28', '16:59', '21:07'];
+
+  it('flags 3 punches for review by default', () => {
+    expect(day(punches)).toMatchObject({ daysCredit: 0, otHours: 0, exception: 'missing_out_punch' });
+  });
+
+  it('counts first to last punch when set to first_last', () => {
+    const card = computeTimecard({
+      employee: WORKER,
+      punches: punches.map(time => `2026-10-05 ${time}`),
+      dateFrom: '2026-10-05',
+      dateTo: '2026-10-05',
+      rules: { ...DEFAULT_PAY_RULES, oddPunchMode: 'first_last' },
+      holidays: [],
+      overrides: [],
+    });
+    expect(card.days[0]).toMatchObject({ daysCredit: 1, otHours: 5, exception: null });
+  });
+
+  it('still flags a single punch either way', () => {
+    const card = computeTimecard({
+      employee: WORKER,
+      punches: ['2026-10-05 06:56'],
+      dateFrom: '2026-10-05',
+      dateTo: '2026-10-05',
+      rules: { ...DEFAULT_PAY_RULES, oddPunchMode: 'first_last' },
+      holidays: [],
+      overrides: [],
+    });
+    expect(card.days[0].exception).toBe('single_punch');
+  });
+});
+
+describe('shift schedule (rotating shifts)', () => {
+  const rotating: EmployeeRule = {
+    ...WORKER,
+    shift: NIGHT_SHIFT,
+    shiftSchedule: [
+      { effectiveFrom: '2000-01-01', shift: DAY_SHIFT },
+      { effectiveFrom: '2026-10-07', shift: NIGHT_SHIFT },
+      { effectiveFrom: '2026-10-09', shift: DAY_SHIFT },
+    ],
+  };
+
+  it('uses the shift that starts on or before each date', () => {
+    expect(shiftOnDate(rotating, '2026-10-06')?.id).toBe('day');
+    expect(shiftOnDate(rotating, '2026-10-07')?.id).toBe('night');
+    expect(shiftOnDate(rotating, '2026-10-08')?.id).toBe('night');
+    expect(shiftOnDate(rotating, '2026-10-09')?.id).toBe('day');
+    expect(shiftOnDate({ shift: DAY_SHIFT }, '2026-10-09')?.id).toBe('day');
+  });
+
+  it('splits the morning after a night shift between the night and the next day shift', () => {
+    expect(cutoffBetween(NIGHT_SHIFT, NIGHT_SHIFT)).toBe(11 * 60 + 30);
+    expect(cutoffBetween(NIGHT_SHIFT, DAY_SHIFT)).toBe(5 * 60 + 30);
+    expect(cutoffBetween(DAY_SHIFT, NIGHT_SHIFT)).toBe(0);
+  });
+
+  it('computes a day week, a night week and the switch back without mixing punches', () => {
+    const card = computeTimecard({
+      employee: rotating,
+      punches: [
+        '2026-10-06 07:00', '2026-10-06 16:00',
+        '2026-10-07 19:00', '2026-10-08 04:00',
+        '2026-10-08 19:00', '2026-10-09 04:00',
+        '2026-10-09 07:00', '2026-10-09 16:00',
+      ],
+      dateFrom: '2026-10-06',
+      dateTo: '2026-10-09',
+      rules: DEFAULT_PAY_RULES,
+      holidays: [],
+      overrides: [],
+    });
+    expect(card.days.map(result => [result.date, result.shift?.id, result.daysCredit, result.exception])).toEqual([
+      ['2026-10-06', 'day', 1, null],
+      ['2026-10-07', 'night', 1, null],
+      ['2026-10-08', 'night', 1, null],
+      ['2026-10-09', 'day', 1, null],
+    ]);
+    expect(card.days[1].ndHours).toBe(7);
+    expect(card.summary.days).toBe(4);
+  });
+
+  it('keeps past days on the old shift after a change', () => {
+    const before = day(['07:00', '16:00'], { employee: rotating, date: '2026-10-06' });
+    expect(before).toMatchObject({ daysCredit: 1, exception: null });
+    expect(before.shift?.id).toBe('day');
   });
 });
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CalendarDays, Download, Search } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { addDaysToDateKey, todayBusinessDate } from '../../lib/date';
-import type { WfEmployeeRateRow, WfEmployeeRow, WfHolidayRow, WfPunchRow, WfShiftRow, WfTimecardOverrideRow } from '../../lib/database.types';
+import type { WfEmployeeRateRow, WfEmployeeRow, WfEmployeeShiftRow, WfHolidayRow, WfPunchRow, WfShiftRow, WfTimecardOverrideRow } from '../../lib/database.types';
 import { buildTimecards, loadOverrides, loadPunches, loadRateHistory, loadWorkforceBasics } from '../../lib/workforce/data';
 import { formatPeriod, formatShortDate, qty, weekdayShort } from '../../lib/workforce/format';
 import { rateOn } from '../../lib/workforce/payroll';
@@ -30,6 +30,7 @@ function cellLabel(day: DayResult): string {
 export default function AttendanceTimecards({ canAdjust, canViewRates, range, onRangeChange }: Props) {
   const [employees, setEmployees] = useState<WfEmployeeRow[]>([]);
   const [shifts, setShifts] = useState<WfShiftRow[]>([]);
+  const [shiftSchedule, setShiftSchedule] = useState<WfEmployeeShiftRow[]>([]);
   const [holidays, setHolidays] = useState<WfHolidayRow[]>([]);
   const [rules, setRules] = useState<PayRules>(DEFAULT_PAY_RULES);
   const [punches, setPunches] = useState<Pick<WfPunchRow, 'employee_id' | 'punched_at'>[]>([]);
@@ -83,6 +84,7 @@ export default function AttendanceTimecards({ canAdjust, canViewRates, range, on
     if (basics.data) {
       setEmployees(basics.data.employees);
       setShifts(basics.data.shifts);
+      setShiftSchedule(basics.data.shiftSchedule);
       setHolidays(basics.data.holidays);
       setRules(basics.data.rules);
     }
@@ -104,8 +106,8 @@ export default function AttendanceTimecards({ canAdjust, canViewRates, range, on
   const dates = useMemo(() => (range ? datesInRange(range.dateFrom, range.dateTo) : []), [range]);
   const holidayByDate = useMemo(() => new Map(holidays.map(holiday => [holiday.holiday_date, holiday])), [holidays]);
   const cards = useMemo(() => (range ? buildTimecards({
-    employees, shifts, punches, overrides, holidays, rules, dateFrom: range.dateFrom, dateTo: range.dateTo,
-  }) : new Map<string, EmployeeTimecard>()), [employees, holidays, overrides, punches, range, rules, shifts]);
+    employees, shifts, punches, overrides, holidays, rules, dateFrom: range.dateFrom, dateTo: range.dateTo, shiftSchedule,
+  }) : new Map<string, EmployeeTimecard>()), [employees, holidays, overrides, punches, range, rules, shifts, shiftSchedule]);
 
   const rateHistory = useMemo(() => rates.map(rate => ({ employeeId: rate.employee_id, dailyRate: Number(rate.daily_rate), effectiveFrom: rate.effective_from })), [rates]);
 
@@ -231,6 +233,8 @@ export default function AttendanceTimecards({ canAdjust, canViewRates, range, on
                           {employee.pay_type === 'fixed' && <Badge tone="slate">Fixed</Badge>}
                           {noRate && <Badge tone="red">No rate</Badge>}
                           {!employee.shift_id && <Badge tone="amber">No shift</Badge>}
+                          {card.days.some(day => day.shift?.crossesMidnight) && <Badge tone="sky">Night</Badge>}
+                          {new Set(card.days.map(day => day.shift?.id ?? '')).size > 1 && <Badge tone="slate">Shift change</Badge>}
                         </div>
                       </td>
                       {card.days.map((day: DayResult) => {
@@ -272,7 +276,6 @@ export default function AttendanceTimecards({ canAdjust, canViewRates, range, on
       {selected && selectedEmployee && selectedDay && (
         <TimecardPanel
           employee={selectedEmployee}
-          shift={shifts.find(shift => shift.id === selectedEmployee.shift_id) ?? null}
           day={selectedDay}
           canAdjust={canAdjust}
           onClose={() => setSelected(null)}

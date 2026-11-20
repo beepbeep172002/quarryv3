@@ -31,6 +31,7 @@ import {
   Wallet,
   HandCoins,
   SlidersHorizontal,
+  Building2,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ActivityCode } from '../lib/database.types';
@@ -100,9 +101,10 @@ const SEARCH_KEYWORDS: Partial<Record<NavSection, string>> = {
   'operations-quarry-site': 'quarry site binder boulder trips',
   'operations-wobbler': 'wobbler dumps loaders',
   'workforce-employees': 'employees employee masterlist workers staff payroll sahod sweldo biometrics rate',
+  'workforce-departments': 'departments department positions position job title designation division section employees',
   'workforce-attendance': 'attendance biometrics dtr time in out punches timecard overtime ot night diff import pdf',
   'workforce-payroll': 'payroll sahod sweldo salary payslip wages register',
-  'workforce-cash-advances': 'cash advance vale ca utang employees deduction',
+  'workforce-cash-advances': 'cash advance vale ca utang employees deduction charges cafeteria canteen food tab',
   'workforce-settings': 'workforce settings pay rules shifts holidays overtime night differential',
 };
 
@@ -186,7 +188,7 @@ export default function Sidebar({ activeSection, onNavigate, can }: SidebarProps
       );
     }
 
-    if (can('FUEL_VIEW') || can('FUEL_PURCHASE_ADD') || can('FUEL_ISSUANCE_ADD') || can('FUEL_PURCHASE_EDIT') || can('FUEL_ISSUANCE_EDIT') || can('FUEL_ADJUST') || can('FUEL_EXPORT') || can('FUEL_EQUIPMENT_MANAGE') || can('USER_GROUP_ACCESS_MANAGE')) {
+    if (can('FUEL_VIEW') || can('FUEL_PURCHASE_ADD') || can('FUEL_ISSUANCE_ADD') || can('FUEL_PURCHASE_EDIT') || can('FUEL_ISSUANCE_EDIT') || can('FUEL_ADJUST') || can('FUEL_EXPORT') || can('FUEL_EQUIPMENT_MANAGE') || can('FUEL_SUPPLIER_MANAGE') || can('USER_GROUP_ACCESS_MANAGE')) {
       items.push(
         {
           id: 'fuel-management',
@@ -270,6 +272,7 @@ export default function Sidebar({ activeSection, onNavigate, can }: SidebarProps
     const items: MenuItem[] = [];
     if (can('WF_EMPLOYEES_VIEW') || can('WF_EMPLOYEES_MANAGE') || can('USER_GROUP_ACCESS_MANAGE')) {
       items.push({ id: 'workforce-employees', label: 'Employees', icon: <Contact size={18} /> });
+      items.push({ id: 'workforce-departments', label: 'Departments & Positions', icon: <Building2 size={18} /> });
     }
     if (can('WF_ATTENDANCE_VIEW') || can('WF_ATTENDANCE_IMPORT') || can('WF_ATTENDANCE_ADJUST') || can('USER_GROUP_ACCESS_MANAGE')) {
       items.push({ id: 'workforce-attendance', label: 'Attendance', icon: <Fingerprint size={18} /> });
@@ -278,7 +281,7 @@ export default function Sidebar({ activeSection, onNavigate, can }: SidebarProps
       items.push({ id: 'workforce-payroll', label: 'Payroll', icon: <Wallet size={18} /> });
     }
     if (can('WF_CASH_ADVANCE_VIEW') || can('WF_CASH_ADVANCE_MANAGE') || can('USER_GROUP_ACCESS_MANAGE')) {
-      items.push({ id: 'workforce-cash-advances', label: 'Cash Advances', icon: <HandCoins size={18} /> });
+      items.push({ id: 'workforce-cash-advances', label: 'Cash Advances & Charges', icon: <HandCoins size={18} /> });
     }
     if (can('WF_SETTINGS_MANAGE') || can('USER_GROUP_ACCESS_MANAGE')) {
       items.push({ id: 'workforce-settings', label: 'Pay Rules & Holidays', icon: <SlidersHorizontal size={18} /> });

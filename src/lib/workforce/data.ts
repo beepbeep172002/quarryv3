@@ -3,6 +3,7 @@ import { addDaysToDateKey } from '../date';
 import type {
   WfEmployeeRateRow,
   WfEmployeeRow,
+  WfEmployeeShiftRow,
   WfHolidayRow,
   WfPunchRow,
   WfSettingsRow,
@@ -28,14 +29,19 @@ export interface WorkforceBasics {
   shifts: WfShiftRow[];
   employees: WfEmployeeRow[];
   holidays: WfHolidayRow[];
+  /** Shift changes with start dates. Empty if the schedule migration has not been run yet. */
+  shiftSchedule: WfEmployeeShiftRow[];
+  /** False when the shift schedule table is missing (migration not run). */
+  shiftScheduleAvailable: boolean;
 }
 
 export async function loadWorkforceBasics(): Promise<{ data: WorkforceBasics | null; error: string | null }> {
-  const [settings, shifts, employees, holidays] = await Promise.all([
+  const [settings, shifts, employees, holidays, schedule] = await Promise.all([
     supabase.from('wf_settings').select('*').limit(1).maybeSingle(),
     supabase.from('wf_shifts').select('*').order('name'),
     fetchAllPages<WfEmployeeRow>(async (from, to) => await supabase.from('wf_employees').select('*').order('full_name').range(from, to)),
     supabase.from('wf_holidays').select('*').order('holiday_date'),
+    fetchAllPages<WfEmployeeShiftRow>(async (from, to) => await supabase.from('wf_employee_shifts').select('*').order('effective_from').range(from, to)),
   ]);
   const error = settings.error ?? shifts.error ?? employees.error ?? holidays.error;
   if (error) return { data: null, error: error.message };
@@ -46,6 +52,8 @@ export async function loadWorkforceBasics(): Promise<{ data: WorkforceBasics | n
       shifts: shifts.data ?? [],
       employees: employees.data,
       holidays: holidays.data ?? [],
+      shiftSchedule: schedule.error ? [] : schedule.data,
+      shiftScheduleAvailable: !schedule.error,
     },
     error: null,
   };
@@ -87,6 +95,26 @@ export async function loadCaBalances(): Promise<{ data: Map<string, number>; err
   return { data: new Map((data ?? []).map(row => [row.employee_id, Number(row.balance)])), error: null };
 }
 
+/**
+ * Open charges (cafeteria tab, etc.) per employee as of `asOf`: charges and adjustments dated on
+ * or before it, minus every payroll deduction. Empty if the charges migration has not been run.
+ */
+export async function loadChargeBalances(asOf: string): Promise<{ data: Map<string, number>; available: boolean }> {
+  const result = await fetchAllPages<{ employee_id: string; entry_date: string; type: string; amount: number }>(async (from, to) => await supabase
+    .from('wf_charge_entries')
+    .select('employee_id, entry_date, type, amount')
+    .order('entry_date')
+    .order('id')
+    .range(from, to));
+  if (result.error) return { data: new Map(), available: false };
+  const balances = new Map<string, number>();
+  for (const entry of result.data) {
+    if (entry.type !== 'deduction' && entry.entry_date > asOf) continue;
+    balances.set(entry.employee_id, Math.round(((balances.get(entry.employee_id) ?? 0) + Number(entry.amount)) * 100) / 100);
+  }
+  return { data: balances, available: true };
+}
+
 export function holidaysFromRows(rows: WfHolidayRow[]): Holiday[] {
   return rows.map(row => ({ date: row.holiday_date, name: row.name, type: row.type }));
 }
@@ -101,12 +129,15 @@ export function overrideFromRow(row: WfTimecardOverrideRow): TimecardOverride {
   };
 }
 
-export function employeeRule(employee: WfEmployeeRow, shiftsById: Map<string, ShiftRule>): EmployeeRule {
+export function employeeRule(employee: WfEmployeeRow, shiftsById: Map<string, ShiftRule>, schedule: WfEmployeeShiftRow[] = []): EmployeeRule {
   return {
     id: employee.id,
     payType: employee.pay_type,
     otEligible: employee.ot_eligible,
     shift: employee.shift_id ? shiftsById.get(employee.shift_id) ?? null : null,
+    shiftSchedule: schedule
+      .filter(row => row.employee_id === employee.id)
+      .map(row => ({ effectiveFrom: row.effective_from, shift: shiftsById.get(row.shift_id) ?? null })),
   };
 }
 
@@ -120,6 +151,7 @@ export function buildTimecards(input: {
   rules: PayRules;
   dateFrom: string;
   dateTo: string;
+  shiftSchedule?: WfEmployeeShiftRow[];
 }): Map<string, EmployeeTimecard> {
   const shiftsById = new Map(input.shifts.map(shift => [shift.id, shiftFromRow(shift)]));
   const punchesByEmployee = new Map<string, string[]>();
@@ -134,6 +166,12 @@ export function buildTimecards(input: {
     list.push(overrideFromRow(row));
     overridesByEmployee.set(row.employee_id, list);
   }
+  const scheduleByEmployee = new Map<string, WfEmployeeShiftRow[]>();
+  for (const row of input.shiftSchedule ?? []) {
+    const list = scheduleByEmployee.get(row.employee_id) ?? [];
+    list.push(row);
+    scheduleByEmployee.set(row.employee_id, list);
+  }
   const holidays = holidaysFromRows(input.holidays);
   const cards = new Map<string, EmployeeTimecard>();
   for (const employee of input.employees) {
@@ -141,7 +179,7 @@ export function buildTimecards(input: {
     const overrides = overridesByEmployee.get(employee.id) ?? [];
     if (employee.status !== 'active' && punches.length === 0 && overrides.length === 0) continue;
     cards.set(employee.id, computeTimecard({
-      employee: employeeRule(employee, shiftsById),
+      employee: employeeRule(employee, shiftsById, scheduleByEmployee.get(employee.id)),
       punches,
       dateFrom: input.dateFrom,
       dateTo: input.dateTo,

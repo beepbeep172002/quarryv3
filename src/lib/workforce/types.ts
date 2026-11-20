@@ -3,6 +3,8 @@
 export type OtRounding = 'nearest_hour' | 'floor_hour' | 'floor_half_hour' | 'exact';
 export type PayType = 'daily' | 'fixed';
 export type HolidayType = 'regular' | 'special';
+/** Days with 3 or 5 punches: flag for review, or count first to last punch. */
+export type OddPunchMode = 'review' | 'first_last';
 
 export interface PayRules {
   otMultiplier: number;
@@ -12,6 +14,7 @@ export interface PayRules {
   specialHolidayPremium: number;
   punchDedupeMinutes: number;
   minDailyWage: number;
+  oddPunchMode: OddPunchMode;
 }
 
 export interface ShiftRule {
@@ -26,11 +29,19 @@ export interface ShiftRule {
   crossesMidnight: boolean;
 }
 
+export interface ShiftScheduleEntry {
+  effectiveFrom: string;
+  shift: ShiftRule | null;
+}
+
 export interface EmployeeRule {
   id: string;
   payType: PayType;
   otEligible: boolean;
+  /** Current shift; used for dates the schedule does not cover. */
   shift: ShiftRule | null;
+  /** Shift changes with their start dates (day week / night week). Optional. */
+  shiftSchedule?: ShiftScheduleEntry[];
 }
 
 export interface Holiday {
@@ -56,6 +67,7 @@ export const DEFAULT_PAY_RULES: PayRules = {
   specialHolidayPremium: 0.3,
   punchDedupeMinutes: 5,
   minDailyWage: 600,
+  oddPunchMode: 'review',
 };
 
 export const LAW_OT_MULTIPLIER = 1.25;
@@ -71,6 +83,7 @@ export function hhmm(value: string | null | undefined): string {
 export function rulesFromSettingsRow(row: {
   ot_multiplier: number; nd_rate: number; nd_start: string; nd_end: string;
   special_holiday_premium: number; punch_dedupe_minutes: number; min_daily_wage: number;
+  odd_punch_mode?: string | null;
 } | null | undefined): PayRules {
   if (!row) return DEFAULT_PAY_RULES;
   return {
@@ -81,6 +94,7 @@ export function rulesFromSettingsRow(row: {
     specialHolidayPremium: Number(row.special_holiday_premium),
     punchDedupeMinutes: Number(row.punch_dedupe_minutes),
     minDailyWage: Number(row.min_daily_wage),
+    oddPunchMode: row.odd_punch_mode === 'first_last' ? 'first_last' : 'review',
   };
 }
 

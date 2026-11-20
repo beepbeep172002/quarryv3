@@ -5,7 +5,7 @@
  * Pure functions only. Times are Philippine local wall-clock values, handled as
  * whole minutes so there is no timezone drift.
  */
-import type { EmployeeRule, Holiday, OtRounding, PayRules, ShiftRule, TimecardOverride } from './types';
+import type { EmployeeRule, Holiday, OtRounding, PayRules, ShiftRule, ShiftScheduleEntry, TimecardOverride } from './types';
 
 export type DayException = 'single_punch' | 'missing_out_punch' | 'no_shift';
 
@@ -33,6 +33,8 @@ export interface DayResult extends DayValues {
   exception: DayException | null;
   override: TimecardOverride | null;
   holiday: Holiday | null;
+  /** Shift used for this date. */
+  shift: ShiftRule | null;
 }
 
 export interface TimecardSummary {
@@ -110,21 +112,51 @@ export function workDateCutoff(shift: ShiftRule | null): number {
   return end < start ? Math.floor((end + start) / 2) : 0;
 }
 
-/** Groups absolute punch minutes by work date, deduplicated. */
-export function groupPunchesByWorkDate(absoluteMinutes: number[], shift: ShiftRule | null, dedupeMinutes: number) {
+/**
+ * Cutoff on a calendar date that follows a shift crossing midnight: punches before it
+ * belong to the previous work date. Halfway between the previous shift's end and the
+ * start of this date's shift (night 19:00-04:00 then day 07:00: cutoff 05:30).
+ */
+export function cutoffBetween(previous: ShiftRule | null, current: ShiftRule | null): number {
+  if (!previous?.crossesMidnight) return 0;
+  const previousEnd = timeToMinutes(previous.endTime);
+  const nextStart = timeToMinutes((current ?? previous).startTime);
+  return nextStart > previousEnd ? Math.floor((previousEnd + nextStart) / 2) : previousEnd;
+}
+
+/** Shift in effect on `date`: the latest schedule entry starting on or before it, else the current shift. */
+export function shiftOnDate(employee: Pick<EmployeeRule, 'shift' | 'shiftSchedule'>, date: string): ShiftRule | null {
+  let best: ShiftScheduleEntry | null = null;
+  for (const entry of employee.shiftSchedule ?? []) {
+    if (entry.effectiveFrom <= date && (!best || entry.effectiveFrom > best.effectiveFrom)) best = entry;
+  }
+  return best ? best.shift : employee.shift;
+}
+
+type ShiftSource = ShiftRule | null | ((date: string) => ShiftRule | null);
+
+/** Groups absolute punch minutes by work date, deduplicated. `shift` may vary by date. */
+export function groupPunchesByWorkDate(absoluteMinutes: number[], shift: ShiftSource, dedupeMinutes: number) {
+  const shiftFor = typeof shift === 'function' ? shift : () => shift;
+  const cutoffs = new Map<number, number>();
+  const workIndexOf = (absolute: number) => {
+    const index = Math.floor(absolute / DAY);
+    let cutoff = cutoffs.get(index);
+    if (cutoff === undefined) {
+      cutoff = cutoffBetween(shiftFor(dateFromIndex(index - 1)), shiftFor(dateFromIndex(index)));
+      cutoffs.set(index, cutoff);
+    }
+    return absolute - index * DAY < cutoff ? index - 1 : index;
+  };
   const sorted = dedupePunches([...absoluteMinutes].sort((a, b) => a - b), dedupeMinutes);
   const raw = new Map<string, number>();
   const grouped = new Map<string, number[]>();
-  const cutoff = workDateCutoff(shift);
   for (const absolute of [...absoluteMinutes].sort((a, b) => a - b)) {
-    const index = Math.floor(absolute / DAY);
-    const workIndex = absolute - index * DAY < cutoff ? index - 1 : index;
-    const date = dateFromIndex(workIndex);
+    const date = dateFromIndex(workIndexOf(absolute));
     raw.set(date, (raw.get(date) ?? 0) + 1);
   }
   for (const absolute of sorted) {
-    const index = Math.floor(absolute / DAY);
-    const workIndex = absolute - index * DAY < cutoff ? index - 1 : index;
+    const workIndex = workIndexOf(absolute);
     const date = dateFromIndex(workIndex);
     const list = grouped.get(date) ?? [];
     list.push(absolute - workIndex * DAY);
@@ -223,22 +255,25 @@ export function computeDay(input: {
   rules: PayRules;
   override?: TimecardOverride | null;
   holiday?: Holiday | null;
+  /** Shift for this date; defaults to the employee's current shift. */
+  shift?: ShiftRule | null;
 }): DayResult {
   const { date, punchMinutes, employee, rules } = input;
   const override = input.override ?? null;
+  const shift = input.shift !== undefined ? input.shift : employee.shift;
   const base = {
     date,
     punchMinutes,
     rawPunchCount: input.rawPunchCount ?? punchMinutes.length,
     override,
     holiday: input.holiday ?? null,
+    shift,
   };
 
   if (punchMinutes.length === 0) {
     return { ...base, ...applyOverride(ZERO, override), computed: ZERO, workedMinutes: 0, lateMinutes: 0, exception: null };
   }
 
-  const shift = employee.shift;
   if (!shift) {
     return { ...base, ...applyOverride(ZERO, override), computed: ZERO, workedMinutes: 0, lateMinutes: 0, exception: 'no_shift' };
   }
@@ -248,7 +283,8 @@ export function computeDay(input: {
   }
 
   const computed = computeFromFirstLast(punchMinutes[0], punchMinutes[punchMinutes.length - 1], employee, shift, rules);
-  const exception: DayException | null = punchMinutes.length % 2 === 1 ? 'missing_out_punch' : null;
+  const oddPunches = punchMinutes.length % 2 === 1;
+  const exception: DayException | null = oddPunches && rules.oddPunchMode !== 'first_last' ? 'missing_out_punch' : null;
   const effective = exception ? ZERO : computed.values;
 
   return {
@@ -278,7 +314,8 @@ export function computeTimecard(input: {
 }): EmployeeTimecard {
   const { employee, rules, dateFrom, dateTo } = input;
   const absolute = input.punches.map(parsePunchTimestamp);
-  const { grouped, raw } = groupPunchesByWorkDate(absolute, employee.shift, rules.punchDedupeMinutes);
+  const shiftFor = (date: string) => shiftOnDate(employee, date);
+  const { grouped, raw } = groupPunchesByWorkDate(absolute, shiftFor, rules.punchDedupeMinutes);
   const holidayByDate = new Map(input.holidays.map(holiday => [holiday.date, holiday]));
   const overrideByDate = new Map(input.overrides.map(override => [override.workDate, override]));
 
@@ -290,6 +327,7 @@ export function computeTimecard(input: {
     rules,
     override: overrideByDate.get(date) ?? null,
     holiday: holidayByDate.get(date) ?? null,
+    shift: shiftFor(date),
   }));
 
   return { days, summary: summarizeTimecard(days, employee, dateFrom, dateTo, input.holidays) };

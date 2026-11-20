@@ -23,6 +23,7 @@ interface RulesForm {
   punch_dedupe_minutes: string;
   min_daily_wage: string;
   default_shift_id: string;
+  odd_punch_mode: 'review' | 'first_last';
 }
 
 interface ShiftForm {
@@ -62,6 +63,7 @@ function rulesForm(row: WfSettingsRow): RulesForm {
     punch_dedupe_minutes: String(row.punch_dedupe_minutes),
     min_daily_wage: String(row.min_daily_wage),
     default_shift_id: row.default_shift_id ?? '',
+    odd_punch_mode: row.odd_punch_mode === 'first_last' ? 'first_last' : 'review',
   };
 }
 
@@ -153,6 +155,8 @@ export default function WorkforceSettings({ canManage }: Props) {
         punch_dedupe_minutes: dedupe,
         min_daily_wage: parseAmount(form.min_daily_wage),
         default_shift_id: form.default_shift_id || null,
+        // Only once the column exists (2026-11-15 migration).
+        ...('odd_punch_mode' in settings ? { odd_punch_mode: form.odd_punch_mode } : {}),
       })
       .eq('id', settings.id)
       .select('*');
@@ -288,6 +292,14 @@ export default function WorkforceSettings({ canManage }: Props) {
                       {shifts.filter(shift => shift.is_active || shift.id === form.default_shift_id).map(shift => <option key={shift.id} value={shift.id}>{shift.name}</option>)}
                     </select>
                   </Field>
+                  {'odd_punch_mode' in (settings ?? {}) && (
+                    <Field label="3 or 5 Punches in a Day" helper="Odd punches">
+                      <select value={form.odd_punch_mode} onChange={event => updateRules('odd_punch_mode', event.target.value as RulesForm['odd_punch_mode'])} className="input" disabled={disabled}>
+                        <option value="review">Review first (0 until HR confirms)</option>
+                        <option value="first_last">Count first in to last out</option>
+                      </select>
+                    </Field>
+                  )}
                 </div>
                 <p className="text-xs text-slate-500">
                   Regular holidays are paid 100% to daily workers who worked at least one day in the period; working on a regular holiday also earns the day (200%).

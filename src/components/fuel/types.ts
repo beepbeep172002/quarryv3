@@ -1,5 +1,5 @@
 import type { CompanyEquipment, FuelIssuance, Truck as TruckType } from '../../lib/database.types';
-export type FuelTab = 'overview' | 'purchases' | 'issuances' | 'equipment' | 'history';
+export type FuelTab = 'overview' | 'purchases' | 'issuances' | 'equipment' | 'suppliers' | 'history';
 
 export type FuelIssuanceWithTarget = FuelIssuance & {
   trucks?: TruckType | null;
@@ -14,6 +14,7 @@ export interface FuelManagementProps {
   canAdjust?: boolean;
   canExport?: boolean;
   canManageEquipment?: boolean;
+  canManageSuppliers?: boolean;
 }
 
 export interface EquipmentFormState {
